@@ -42,9 +42,9 @@ class PySH(code.InteractiveConsole):
     def __init__(self, locals):
         code.InteractiveConsole.__init__(self, locals)
 
-    def _filter(self, line, more):
+    def _filter(self, line):
         if line.strip().startswith("!") and not line.strip().startswith("!`"):
-            line = "%s__pysh_builtins__.call_sh(\"%s\")" % (re.findall("^\s*", line)[0], line.strip()[1:].replace("\"", "\\\""))
+            line = "%s__pysh_builtins__.call_sh(\"%s\")" % (re.findall("^\s*", line)[0], line.strip()[1:].replace("\\\"", "\"").replace("\"", "\\\""))
         else:
             for string in re.findall("[\"\'].+?[\"\']", line):
                 oldstr = string
@@ -83,8 +83,7 @@ class PySH(code.InteractiveConsole):
         while 1:
             try:
                 try:
-                    line = self.raw_input("%s %s %s " % (os.getenv("USER"), os.getcwd().replace(os.getenv("HOME"), "~"), (">>>" if not more else "...")))
-                    line = self._filter(line, more)
+                    line = self.raw_input("\033[92m\033[1m%s \033[95m%s \033[93m%s \033[0m" % (os.getenv("USER"), os.getcwd().replace(os.getenv("HOME"), "~"), (">>>" if not more else "...")))
                 except EOFError:
                     self.write("\n")
                     break
@@ -94,6 +93,16 @@ class PySH(code.InteractiveConsole):
                 self.write("\nKeyboardInterrupt\n")
                 self.resetbuffer()
                 more = False
+
+    def push(self, line):
+        """Adapeted from code.InteractiveConsole.push"""
+        line = self._filter(line)
+        self.buffer.append(line)
+        source = "\n".join(self.buffer)
+        more = self.runsource(source, self.filename)
+        if not more:
+            self.resetbuffer()
+        return more
 
     def showtraceback(self):
         """Adapted from code.InteractiveInterpreter.showtraceback"""
@@ -125,6 +134,22 @@ class PySH(code.InteractiveConsole):
 if __name__ == "__main__":
     if sys.version_info[0] > 2:
         shell = PySH(locals={"__pysh_builtins__": PySH_builtins})
-        shell.interact()
+        if len(sys.argv) < 2:
+            shell.interact()
+        else:
+            try:
+                if not os.path.isdir(sys.argv[1]):
+                    text = open(sys.argv[1]).read().split("\n")
+                    if text[0].startswith("#!") and not "pysh" in text[0].lower():
+                        shell.push("!%s %s" % (text[0].replace("#!", ""), sys.argv[1]))
+                        sys.exit()
+                    else:
+                        for line in text:
+                            shell.push(line)
+                else:
+                    raise OSError(errno.EISDIR, "Path is a directory", sys.argv[1])
+            except Exception as e:
+                print(e)
+                sys.exit()
     else:
         print("Python v3 required. Exiting")
