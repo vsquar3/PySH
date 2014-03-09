@@ -10,8 +10,9 @@ I started working on this because I dislike how limiting SH is as a language. Ba
 The number of symbols unused in Python syntax are few, so syntactical additions present in PySH appear rather arbitrary and are subject to radical change as development progresses.
 Its based off code.py, so in usage it is almost identical to a regular Python shell. The differences are listed below:
 
-* ``` `some_string` ``` - Will attempt to execute program in a similar way to a bourne-like shell, eg ``` `"zsh"` ``` would start a new ZShell instance
-* ``` !`some_string` ``` - Will return the output of executed string, eg ``` !`"echo test"` ``` would return "test\n"
+* ``` !`some_string` ``` - Will attempt to execute program in a similar way to a bourne-like shell, eg ``` !`"zsh"` ``` would start a new ZShell instance
+ * For convenience, ``` !zsh ``` is equivalent to ``` !`"zsh"` ```
+* ``` `some_string` ``` - Will return the output of executed string, similar to that in bourne-like shells. eg ``` `"echo test"` ``` would return ``` "test\n" ```
 * ``` $VAR ``` - Environment variables, eg
  * ``` print($HOME) ``` - prints home path
  * ``` $TEST = "1" ``` - sets TEST to "1"

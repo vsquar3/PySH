@@ -43,23 +43,26 @@ class PySH(code.InteractiveConsole):
         code.InteractiveConsole.__init__(self, locals)
 
     def _filter(self, line, more):
-        for string in re.findall("[\"\'].+?[\"\']", line):
-            oldstr = string
-            for match in re.finditer("[^\\\\]~", string):
-                string = string[:match.start()+1] + os.getenv("HOME") + string[match.end():]
-            string = string.replace("\\~", "~")
-            line = line.replace(oldstr, string)
+        if line.strip().startswith("!") and not line.strip().startswith("!`"):
+            line = "%s__pysh_builtins__.call_sh(\"%s\")" % (re.findall("^\s*", line)[0], line.strip()[1:].replace("\"", "\\\""))
+        else:
+            for string in re.findall("[\"\'].+?[\"\']", line):
+                oldstr = string
+                for match in re.finditer("[^\\\\]~", string):
+                    string = string[:match.start()+1] + os.getenv("HOME") + string[match.end():]
+                string = string.replace("\\~", "~")
+                line = line.replace(oldstr, string)
 
-        for expr in [re.sub("[\"\'].+?[\"\']", "", line)]:
-            oldexpr = expr
-            for match in re.findall("\$(\w+)", expr):
-                expr = expr.replace("$%s" % match, "__pysh_builtins__.environ['%s']" % match)
-            for match in re.findall("^(exit|quit)$", expr):
-                expr = expr.replace(match, "exit()")
-            line = line.replace(oldexpr, expr)
+            for expr in [re.sub("[\"\'].+?[\"\']", "", line)]:
+                oldexpr = expr
+                for match in re.findall("\$(\w+)", expr):
+                    expr = expr.replace("$%s" % match, "__pysh_builtins__.environ['%s']" % match)
+                for match in re.findall("^(exit|quit)$", expr):
+                    expr = expr.replace(match, "exit()")
+                line = line.replace(oldexpr, expr)
 
-        line = re.sub("!`(?P<str>.*?)`", "__pysh_builtins__.call(\g<str>)", line)
-        line = re.sub("`(?P<str>.*?)`", "__pysh_builtins__.call_sh(\g<str>)", line)
+            line = re.sub("!`(?P<str>.*?)`", "__pysh_builtins__.call_sh(\g<str>)", line)
+            line = re.sub("`(?P<str>.*?)`", "__pysh_builtins__.call(\g<str>)", line)
 
         return line
 
