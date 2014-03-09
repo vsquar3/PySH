@@ -25,7 +25,7 @@ class PySH_builtins:
             return PySH_builtins.change_dir(call_str.replace("cd ", ""))
         else:
             if not shell:
-                return subprocess.check_output(call_str.split(" "), stdin=stdin, stderr=subprocess.STDOUT, shell=False)
+                return subprocess.check_output(call_str.split(" "), stdin=stdin, stderr=subprocess.STDOUT, shell=False).decode("UTF-8")
             else:
                 return subprocess.call(call_str.split(" "), stdin=stdin, shell=False)
 
@@ -45,20 +45,21 @@ class PySH(code.InteractiveConsole):
     def _filter(self, line, more):
         for string in re.findall("[\"\'].+?[\"\']", line):
             oldstr = string
-            string = string.replace("~", os.getenv("HOME")).replace("\\%s" % os.getenv("HOME"), "~")
+            for match in re.finditer("[^\\\\]~", string):
+                string = string[:match.start()+1] + os.getenv("HOME") + string[match.end():]
+            string = string.replace("\\~", "~")
             line = line.replace(oldstr, string)
 
-        for expr in [re.sub("[^`][\"\'].+?[\"\'][^`]", "", line)]:
+        for expr in [re.sub("[\"\'].+?[\"\']", "", line)]:
             oldexpr = expr
-            expr = expr.replace("~", "\"%s\"" % os.getenv("HOME")).replace("\\\"%s\"" % os.getenv("HOME"), "~")
-            for match in re.findall("`(.+?)`", expr):
-                newrep = match.replace(match, "__pysh_builtins__.call_sh(%s)" % match)
-                expr = expr.replace("`%s`" % match, newrep)
             for match in re.findall("\$(\w+)", expr):
                 expr = expr.replace("$%s" % match, "__pysh_builtins__.environ['%s']" % match)
             for match in re.findall("^(exit|quit)$", expr):
                 expr = expr.replace(match, "exit()")
             line = line.replace(oldexpr, expr)
+
+        line = re.sub("!`(?P<str>.*?)`", "__pysh_builtins__.call(\g<str>)", line)
+        line = re.sub("`(?P<str>.*?)`", "__pysh_builtins__.call_sh(\g<str>)", line)
 
         return line
 
