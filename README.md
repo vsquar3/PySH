@@ -16,7 +16,7 @@ Its based off code.py, so in usage it is almost identical to a regular Python sh
 * ``` $VAR ``` - Environment variables, eg
  * ``` print($HOME) ``` - prints home path
  * ``` $TEST = "1" ``` - sets TEST to "1"
-* ``` "~" ``` - Filters to the home path. Escapable
+* ``` "~" ``` or ``` "~username" ``` - Filters to the home path. Escapable
 * ``` exit ``` or ``` quit ``` - Filters to ```exit()```
 
 ### Still to come ###

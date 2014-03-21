@@ -2,34 +2,54 @@
 
 import code
 import sys
-import os
 import traceback
 import re
 import readline
-import subprocess
 import errno
+import tokenize
 from site import _Printer
+from io import BytesIO
+
+import os_alt as os
+import subprocess_alt as subprocess
+import tokenize
+
+DEBUG = False #shows PySH files in traceback stack when true
+
+
 
 class PySH_builtins:
+    environ = os.environ
     __version__ = (0, 1)
-    from os import environ
+    __path__ = os.path.dirname(__file__)
 
     copyright = _Printer("copyright", "PySH: Copyleft 2014 Bob131\nPython 3: See http://docs.python.org/3/copyright.html")
     license = _Printer("license", "PySH: GPLv3\nPython 3: See http://docs.python.org/3/license.html")
 
-    def call(call_str, stdin=None, shell=False):
+    def call(call_str="", stdin=None, shell=False):
+        if type(call_str) == bytes:
+            call_str = call_str.decode("UTF-8").replace("\\\\", "\\")
+        call_str = call_str.replace("\\\\", "\\")
+
         if os.path.isdir(call_str):
             raise IsADirectoryError(errno.EISDIR, "Path is a directory", call_str.split(" ")[0])
 
         if call_str.startswith("cd "):
             return PySH_builtins.change_dir(call_str.replace("cd ", ""))
         else:
+            strings = re.finditer("(?<=[\"\']).*?(?=[\"\'])", call_str)
+            call_str = re.sub("(?<=[\"\']).*?(?=[\"\'])", "", call_str)
+            call_str = re.split("(?<!\\\\|^\")\s+", call_str)
+            for preserved in strings:
+                print(preserved.group(0))
+                call_str = call_str[:preserved.start()] + preserved.group(0) + call_str[preserved.start()+1:]
+            print(call_str)
             if not shell:
-                return subprocess.check_output(call_str.split(" "), stdin=stdin, stderr=subprocess.STDOUT, shell=False).decode("UTF-8")
+                return subprocess.check_output(call_str, stdin=stdin, stderr=subprocess.STDOUT, shell=False).decode("UTF-8").strip()
             else:
-                return subprocess.call(call_str.split(" "), stdin=stdin, shell=False)
+                return subprocess.call(call_str, stdin=stdin, shell=False)
 
-    def call_sh(call_str, stdin=None):
+    def call_sh(call_str="", stdin=None):
         PySH_builtins.call(call_str, stdin, shell=True)
 
     def change_dir(path):
@@ -43,28 +63,66 @@ class PySH(code.InteractiveConsole):
         code.InteractiveConsole.__init__(self, locals)
 
     def _filter(self, line):
+        def tilda_filter(string):
+            for match in re.finditer("(?<!\\\\)~\w+", string):
+                path = list(x for x in open("/etc/passwd", "r").read().split("\n") if x.split(":")[0] == match.group(0)[1:])[0].split(":")[5]
+                string = string[:match.start()] + path + string[match.end():]
+            for match in re.finditer("(?<!\\\\)~", string):
+                string = string[:match.start()] + os.getenv("HOME") + string[match.end():]
+            string = string.replace("\\~", "~")
+            return string
+
+        def inlinetokens_get(tokens, i, offset):
+            inlinetokens = []
+            for kind, val, _, _, _ in tokens[i+offset:]:
+                if not val == "`":
+                    inlinetokens.append((kind, val))
+                else:
+                    break
+            return inlinetokens
+
         if line.strip().startswith("!") and not line.strip().startswith("!`"):
-            line = "%s__pysh_builtins__.call_sh(\"%s\")" % (re.findall("^\s*", line)[0], line.strip()[1:].replace("\\\"", "\"").replace("\"", "\\\""))
+            line = "%s!`%s`" % (re.findall("^\s*", line)[0], tilda_filter(line.strip()[1:]).encode("unicode-escape"))
+            line = self._filter(line)
+            return line
         else:
-            for string in re.findall("[\"\'].+?[\"\']", line):
-                oldstr = string
-                for match in re.finditer("[^\\\\]~", string):
-                    string = string[:match.start()+1] + os.getenv("HOME") + string[match.end():]
-                string = string.replace("\\~", "~")
-                line = line.replace(oldstr, string)
+            newtokens = []
+            skipnext = 0
+            i = 1
 
-            for expr in [re.sub("[\"\'].+?[\"\']", "", line)]:
-                oldexpr = expr
-                for match in re.findall("\$(\w+)", expr):
-                    expr = expr.replace("$%s" % match, "__pysh_builtins__.environ['%s']" % match)
-                for match in re.findall("^(exit|quit)$", expr):
-                    expr = expr.replace(match, "exit()")
-                line = line.replace(oldexpr, expr)
+            tokens = list(tokenize.tokenize(BytesIO(line.encode("UTF-8")).readline))
 
-            line = re.sub("!`(?P<str>.*?)`", "__pysh_builtins__.call_sh(\g<str>)", line)
-            line = re.sub("`(?P<str>.*?)`", "__pysh_builtins__.call(\g<str>)", line)
+            for token in tokens:
+                try:
+                    if skipnext == 0:
+                        if token.string == "$" and tokens[i].string.isidentifier():
+                            newtokens.extend([(tokenize.NAME, "__pysh_builtins__.environ"), (tokenize.OP, "["), (tokenize.STRING, "'%s'" % tokens[i].string), (tokenize.OP, "]")])
+                            skipnext += 1
+                        elif token.type == tokenize.STRING:
+                            newtokens.append((tokenize.STRING, tilda_filter(token.string)))
+                        elif token.string == "!" and tokens[i].string == "`" and not tokens[i+1].string == "`":
+                            inlinetokens = inlinetokens_get(tokens, i, 1)
+                            newtokens.extend([(tokenize.NAME, "__pysh_builtins__.call_sh"), (tokenize.OP, "(")])
+                            newtokens.extend(inlinetokens)
+                            newtokens.extend([(tokenize.OP, ")")])
+                            skipnext += 2 + len(inlinetokens)
+                        elif token.string == "`" and not tokens[i].string == "`" and not tokens[i-2].string == "`":
+                            inlinetokens = inlinetokens_get(tokens, i, 0)
+                            newtokens.extend([(tokenize.NAME, "__pysh_builtins__.call"), (tokenize.OP, "(")])
+                            newtokens.extend(inlinetokens)
+                            newtokens.extend([(tokenize.OP, ")")])
+                            skipnext += 1 + len(inlinetokens)
+                        elif token.string == "exit" or token.string == "quit":
+                            newtokens.extend([(tokenize.NAME, "exit"), (tokenize.OP, "("), (tokenize.OP, ")")])
+                        else:
+                            raise IndexError
+                    else:
+                        skipnext -= 1 
+                except IndexError:
+                    newtokens.append((token.type, token.string))
+                i+=1
 
-        return line
+            return tokenize.untokenize(newtokens).decode("UTF-8")
 
     def interact(self):
         """Adapted from code.InteractiveConsole.interact"""
@@ -79,11 +137,15 @@ class PySH(code.InteractiveConsole):
 
         self.write("Type \"help\", \"copyright\", \"credits\" or \"license\" for more information.\n")
 
+        #setup new env vars
+        self.push("$USERNAME = $USER")
+        self.push("$SHELL = %s" % str(__file__.encode("unicode-escape"))[1:])
+
         more = False
         while 1:
             try:
                 try:
-                    line = self.raw_input("\033[92m\033[1m%s \033[95m%s \033[93m%s \033[0m" % (os.getenv("USER"), os.getcwd().replace(os.getenv("HOME"), "~"), (">>>" if not more else "...")))
+                    line = self.raw_input("%s %s %s " % (os.getenv("USER"), os.getcwd().replace(os.getenv("HOME"), "~"), (">>>" if not more else "...")))
                 except EOFError:
                     self.write("\n")
                     break
@@ -96,7 +158,8 @@ class PySH(code.InteractiveConsole):
 
     def push(self, line):
         """Adapeted from code.InteractiveConsole.push"""
-        line = self._filter(line)
+
+        line = self._filter(str(line))
         self.buffer.append(line)
         source = "\n".join(self.buffer)
         more = self.runsource(source, self.filename)
@@ -122,7 +185,9 @@ class PySH(code.InteractiveConsole):
             tblist = tb = None
         newlines = []
         for line in lines[:-1]:
-            if not sys.argv[0] in line:
+            if not PySH_builtins.__path__ in line:
+                newlines.append(line)
+            elif DEBUG == True:
                 newlines.append(line)
             else:
                 break
